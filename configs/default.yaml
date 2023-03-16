@@ -1,0 +1,20 @@
+seed: 0
+batch_size: 128
+num_workers: 4
+num_classes: 250
+rows_per_frame: 543
+frame_len: 20
+train_frac: 0.8
+log: True
+input_dir: "../asl-signs"
+root_dir: "../asl_logging"
+
+silhouette: False
+lips: True
+eyes: False
+eyebrows: False
+rest_of_face: False
+pose: False
+hands: True
+
+dropout_p: 0
