@@ -4,12 +4,18 @@ num_workers: 4
 num_classes: 250
 rows_per_frame: 543
 frame_len: 20
-train_frac: 0.8
+# If "signer_split: True", split rounded to a signer
+model_type: gru
+# model_type: linear_split
+# model_type: linear
+train_frac: 0.9
+signer_split: True
 log: True
 input_dir: "../asl-signs"
 root_dir: "../asl_logging"
+run_name: null
 
-silhouette: False
+silhouette: True
 lips: True
 eyes: False
 eyebrows: False

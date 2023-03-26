@@ -1,4 +1,6 @@
 import json
+import os
+import pickle
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -24,21 +26,33 @@ def load_relevant_data_subset(pq_path):
 
 
 class DataTransform(Module):
-    def __init__(self, frame_len, keypoints, mean=None, std=None):
+    def __init__(
+        self, frame_len, keypoints, mean=None, std=None, interpolate=True, interpolate_mode="linear"
+    ):
         super().__init__()
         self.frame_len = frame_len
         self.keypoints = keypoints
         self.mean = torch.Tensor(mean or (0.471518, 0.460818, -0.045338))
         self.std = torch.Tensor(std or (0.103356, 0.240428, 0.302280))
+        self.interpolate = interpolate
+        self.interpolate_mode = interpolate_mode
+        self.max_seq_len = 100
 
     def forward(self, x):
         x = x[:, self.keypoints, :]
-        x = x.unsqueeze(0).permute(0, 2, 1, 3)
-        x = F.interpolate(x, [self.frame_len, x.shape[-1]], mode="bilinear")
-        x = x.permute(0, 2, 1, 3)
+        if self.interpolate:
+            x = x.permute(1, 2, 0)
+            x = F.interpolate(x, [self.frame_len], mode=self.interpolate_mode)
+            x = x.permute(2, 0, 1)
+        else:
+            x = x[: self.max_seq_len, :, :]
+            pad_len = self.max_seq_len - x.shape[0]
+            # Pad with zeros at the end of the third dimension from the end
+            x = F.pad(input=x, pad=(0, 0, 0, 0, 0, pad_len), mode="constant", value=0)
         # torch.nan_to_num is not converted properly to tf lite
         x = (x - self.mean) / self.std
-        x = torch.where(torch.isnan(x), torch.zeros((1)), x)
+        x = torch.where(torch.isnan(x), torch.zeros((1)), x).unsqueeze(0)
+
         return x
 
 
@@ -50,6 +64,8 @@ class AslDataset(Dataset):
         sign_dict: Dict[str, int],
         input_dir: str,
         frame_len: int,
+        interpolate: bool = True,
+        frame_dropout_p: float = 0,
     ):
         super().__init__()
         self.df = df
@@ -57,13 +73,24 @@ class AslDataset(Dataset):
         self.sign_dict = sign_dict
         self.input_dir = input_dir
         self.frame_len = frame_len
-        self.data_transform = DataTransform(self.frame_len, self.keypoints)
+        self.data_transform = DataTransform(self.frame_len, self.keypoints, interpolate=interpolate)
         self.augmentations = DataAugmenter()
+        self.frame_dropout_p = frame_dropout_p
 
     def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor]:
-        x = load_relevant_data_subset(self.input_dir / self.df.iloc[index]["path"])
-        x = self.data_transform(torch.Tensor(x))
-        x = self.augmentations(x)
+        path = self.input_dir / self.df.iloc[index]["path"]
+        if str(path).endswith(".pkl"):
+            with open(path, "rb") as f:
+                x = pickle.load(f)
+        else:
+            x = load_relevant_data_subset(path)
+            if self.frame_dropout_p:
+                passed_frames = torch.rand(len(x)) > self.frame_dropout_p
+                if passed_frames.any():
+                    x = x[passed_frames]
+            x = self.data_transform(torch.Tensor(x))
+
+        x = self.augmentations(x.squeeze(0))
         return x, self.sign_dict[self.df.iloc[index]["sign"]]
 
     def __len__(self) -> int:
@@ -81,10 +108,11 @@ class AslDataModule(LightningDataModule):
         seed: int = 0,
         batch_size: int = 32,
         num_workers: int = 4,
-        train_frac: float = 0.8,
+        train_frac: float = 0.9,
+        signer_split=True,
+        interpolate: bool = True,
     ):
         super().__init__()
-
         self.input_dir = Path(input_dir)
         df_path = self.input_dir / "train.csv"
         sign_json_path = self.input_dir / sign_json_path
@@ -106,13 +134,26 @@ class AslDataModule(LightningDataModule):
         self.train_overrides = {"shuffle": True, **common_overrides}
         self.eval_overrides = {"shuffle": False, **common_overrides}
 
-        train_df = self.df.sample(frac=train_frac, random_state=self.seed)
-        val_df = self.df.drop(train_df.index)
+        if signer_split:
+            train_df, val_df = self.split_by_signer(train_frac)
+        else:
+            train_df = self.df.sample(frac=train_frac, random_state=self.seed)
+            val_df = self.df.drop(train_df.index)
         self.datasets["train"] = AslDataset(
-            train_df, self.keypoints, self.sign_dict, self.input_dir, self.frame_len
+            train_df,
+            self.keypoints,
+            self.sign_dict,
+            self.input_dir,
+            self.frame_len,
+            interpolate=interpolate,
         )
         self.datasets["val"] = AslDataset(
-            val_df, self.keypoints, self.sign_dict, self.input_dir, self.frame_len
+            val_df,
+            self.keypoints,
+            self.sign_dict,
+            self.input_dir,
+            self.frame_len,
+            interpolate=interpolate,
         )
 
     def train_dataloader(self) -> DataLoader:
@@ -120,3 +161,25 @@ class AslDataModule(LightningDataModule):
 
     def val_dataloader(self) -> DataLoader:
         return DataLoader(dataset=self.datasets["val"], **self.eval_overrides)
+
+    def split_by_signer(self, train_frac: float, train_smallest_inst: bool = True):
+        max_inst = len(self.df) * train_frac
+        train_signer_ids = []
+
+        signer_counts = self.df["participant_id"].value_counts()
+        signers = (
+            signer_counts[::-1].iteritems() if train_smallest_inst else signer_counts.iteritems()
+        )
+        run_sum = 0
+        for id, no_inst in signers:
+            # Round to a signer
+            if abs(run_sum + no_inst - max_inst) > abs(run_sum - max_inst):
+                break
+            run_sum += no_inst
+            train_signer_ids.append(id)
+        print(
+            f"No. train signers: {len(train_signer_ids)}, No. val signers {len(list(signer_counts)) - len(train_signer_ids)}"
+        )
+        train_df = self.df[self.df["participant_id"].isin(train_signer_ids)]
+        val_df = self.df.drop(train_df.index)
+        return train_df, val_df

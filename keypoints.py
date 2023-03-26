@@ -1,6 +1,6 @@
 # Keypoints taken from https://github.com/tensorflow/tfjs-models/blob/838611c02f51159afdd77469ce67f0e26b7bbb23/face-landmarks-detection/src/mediapipe-facemesh/keypoints.ts
 
-silhouette_ = [
+silhouette_keypoints = [
     10,
     338,
     297,
@@ -101,23 +101,24 @@ all_eyes = (
 )
 all_eyebrows = rightEyebrowUpper + rightEyebrowLower + leftEyebrowUpper + leftEyebrowLower
 
-pose_ = list(range(489, 521 + 1))
-left_hand = list(range(468, 488 + 1))
-right_hand = list(range(522, 542 + 1))
+pose_keypoints = list(range(489, 521 + 1))
+left_hand_keypoints = list(range(468, 488 + 1))
+right_hand_keypoints = list(range(522, 542 + 1))
 
 
 def extract_keypoints(
     silhouette: bool = False,
-    lips: bool = True,
+    lips: bool = False,
     eyes: bool = False,
     eyebrows: bool = False,
     rest_of_face: bool = False,
     pose: bool = False,
-    hands: bool = True,
+    left_hand: bool=False,
+    right_hand: bool=False,
 ):
     keypoints = []
     if silhouette:
-        keypoints += silhouette_
+        keypoints += silhouette_keypoints
     if lips:
         keypoints += all_lips
     if eyes:
@@ -126,10 +127,13 @@ def extract_keypoints(
         keypoints += all_eyebrows
     if rest_of_face:
         keypoints += list(
-            set(range(1, 468)) - set(silhouette_ + all_lips + all_eyes + all_eyebrows)
+            set(range(1, 468)) - set(silhouette_keypoints + all_lips + all_eyes + all_eyebrows)
         )
     if pose:
-        keypoints += pose_
-    if hands:
-        keypoints += left_hand + right_hand
+        keypoints += pose_keypoints
+    if left_hand:
+        keypoints += left_hand_keypoints
+    if right_hand:
+        keypoints += right_hand_keypoints
+
     return list(set(keypoints))

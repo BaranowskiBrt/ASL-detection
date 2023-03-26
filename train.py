@@ -9,7 +9,8 @@ from pytorch_lightning.loggers import WandbLogger
 from config import load_configs
 from datamodule import AslDataModule
 from keypoints import extract_keypoints
-from model import AslModel
+from models import GruModel, LinearModel, LinearSplitModel
+from module import AslLightningModule
 
 if __name__ == "__main__":
     cfg = load_configs("configs/default.yaml")
@@ -24,7 +25,8 @@ if __name__ == "__main__":
         eyebrows=cfg.eyebrows,
         rest_of_face=cfg.rest_of_face,
         pose=cfg.pose,
-        hands=cfg.hands,
+        left_hand=cfg.hands,
+        right_hand=cfg.hands,
     )
     print("Number of extracted keypoints:", len(extracted_keypoints))
     data_module = AslDataModule(
@@ -35,14 +37,33 @@ if __name__ == "__main__":
         batch_size=cfg.batch_size,
         num_workers=cfg.num_workers,
         train_frac=cfg.train_frac,
+        signer_split=cfg.signer_split,
+        interpolate=cfg.model_type != "gru",
     )
-    model = AslModel(
-        num_classes=cfg.num_classes,
-        keypoints_len=len(extracted_keypoints),
-        frame_len=cfg.frame_len,
-        dropout_p=cfg.dropout_p,
+
+    if cfg.model_type == "gru":
+        model = GruModel(
+            num_classes=cfg.num_classes,
+            keypoints_len=len(extracted_keypoints),
+        )
+    elif cfg.model_type == "linear":
+        model = LinearModel(
+            num_classes=cfg.num_classes,
+            keypoints_len=len(extracted_keypoints),
+            frame_len=cfg.frame_len,
+            dropout_p=cfg.dropout_p,
+        )
+    elif cfg.model_type == "linear_split":
+        model = LinearSplitModel(
+            num_classes=cfg.num_classes,
+            keypoints_len=len(extracted_keypoints),
+            frame_len=cfg.frame_len,
+            dropout_p=cfg.dropout_p,
+        )
+    lightning_module = AslLightningModule(cfg.num_classes, model)
+    logger = (
+        WandbLogger(project="ASL", name=cfg.run_name, save_dir=cfg.root_dir) if cfg.log else None
     )
-    logger = WandbLogger(project="ASL", save_dir=cfg.root_dir) if cfg.log else None
 
     callbacks = []
     val_loader = None
@@ -53,17 +74,16 @@ if __name__ == "__main__":
                 dirpath=cfg.root_dir,
                 monitor="val_accuracy",
                 mode="max",
-                filename="model-{epoch:02d}-{val_accuracy:.2f}",
+                filename="model-{epoch:02d}-{val_accuracy:.3f}",
                 every_n_epochs=5,
             )
         )
         val_loader = data_module.val_dataloader()
 
-    print(model)
     print(cfg)
     trainer = pl.Trainer(
-        logger=logger, default_root_dir=cfg.root_dir, callbacks=callbacks, max_epochs=100
+        logger=logger, default_root_dir=cfg.root_dir, callbacks=callbacks, max_epochs=300
     )
 
-    trainer.fit(model, data_module.train_dataloader(), val_loader)
+    trainer.fit(lightning_module, data_module.train_dataloader(), val_loader)
     # trainer.test(model, data_module.val_dataloader(), "../model.ckpt")
