@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from pytorch_lightning import LightningDataModule
-from torch.nn import Module
+from torch.nn import Identity, Module
 from torch.utils.data import DataLoader, Dataset
 
 from augment import DataAugmenter
@@ -36,21 +36,20 @@ class DataTransform(Module):
         self.std = torch.Tensor(std or (0.103356, 0.240428, 0.302280))
         self.interpolate = interpolate
         self.interpolate_mode = interpolate_mode
-        self.max_seq_len = 100
 
     def forward(self, x):
         x = x[:, self.keypoints, :]
+        x = (x - self.mean) / self.std
         if self.interpolate:
             x = x.permute(1, 2, 0)
             x = F.interpolate(x, [self.frame_len], mode=self.interpolate_mode)
             x = x.permute(2, 0, 1)
         else:
-            x = x[: self.max_seq_len, :, :]
-            pad_len = self.max_seq_len - x.shape[0]
+            x = x[: self.frame_len, :, :]
+            pad_len = self.frame_len - x.shape[0]
             # Pad with zeros at the end of the third dimension from the end
             x = F.pad(input=x, pad=(0, 0, 0, 0, 0, pad_len), mode="constant", value=0)
         # torch.nan_to_num is not converted properly to tf lite
-        x = (x - self.mean) / self.std
         x = torch.where(torch.isnan(x), torch.zeros((1)), x).unsqueeze(0)
 
         return x
@@ -64,6 +63,7 @@ class AslDataset(Dataset):
         sign_dict: Dict[str, int],
         input_dir: str,
         frame_len: int,
+        augmenter_cfg: Optional[Dict] = None,
         interpolate: bool = True,
         frame_dropout_p: float = 0,
     ):
@@ -74,7 +74,7 @@ class AslDataset(Dataset):
         self.input_dir = input_dir
         self.frame_len = frame_len
         self.data_transform = DataTransform(self.frame_len, self.keypoints, interpolate=interpolate)
-        self.augmentations = DataAugmenter()
+        self.augmentations = DataAugmenter(augmenter_cfg) if augmenter_cfg else Identity()
         self.frame_dropout_p = frame_dropout_p
 
     def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -90,7 +90,8 @@ class AslDataset(Dataset):
                     x = x[passed_frames]
             x = self.data_transform(torch.Tensor(x))
 
-        x = self.augmentations(x.squeeze(0))
+        x = x.squeeze(0)
+        x = self.augmentations(x)
         return x, self.sign_dict[self.df.iloc[index]["sign"]]
 
     def __len__(self) -> int:
@@ -103,6 +104,7 @@ class AslDataModule(LightningDataModule):
         input_dir: Union[Path, str],
         keypoints: List[int],
         frame_len,
+        augmenter_cfg: Dict,
         df_path: str = "train.csv",
         sign_json_path: str = "sign_to_prediction_index_map.json",
         seed: int = 0,
@@ -145,6 +147,7 @@ class AslDataModule(LightningDataModule):
             self.sign_dict,
             self.input_dir,
             self.frame_len,
+            augmenter_cfg=augmenter_cfg,
             interpolate=interpolate,
         )
         self.datasets["val"] = AslDataset(

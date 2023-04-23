@@ -9,7 +9,7 @@ from pytorch_lightning.loggers import WandbLogger
 from config import load_configs
 from datamodule import AslDataModule
 from keypoints import extract_keypoints
-from models import GruModel, LinearModel, LinearSplitModel
+from models import choose_model
 from module import AslLightningModule
 
 if __name__ == "__main__":
@@ -28,38 +28,26 @@ if __name__ == "__main__":
         left_hand=cfg.hands,
         right_hand=cfg.hands,
     )
-    print("Number of extracted keypoints:", len(extracted_keypoints))
+    keypoint_len = len(extracted_keypoints)
+    print("Number of extracted keypoints:", keypoint_len)
     data_module = AslDataModule(
         cfg.input_dir,
         keypoints=extracted_keypoints,
         frame_len=cfg.frame_len,
+        augmenter_cfg=cfg.augmenter,
         seed=cfg.seed,
         batch_size=cfg.batch_size,
         num_workers=cfg.num_workers,
         train_frac=cfg.train_frac,
         signer_split=cfg.signer_split,
-        interpolate=cfg.model_type != "gru",
+        interpolate=cfg.model_type in ["linear", "linear_split"],
+        # interpolate=True,
     )
 
-    if cfg.model_type == "gru":
-        model = GruModel(
-            num_classes=cfg.num_classes,
-            keypoints_len=len(extracted_keypoints),
-        )
-    elif cfg.model_type == "linear":
-        model = LinearModel(
-            num_classes=cfg.num_classes,
-            keypoints_len=len(extracted_keypoints),
-            frame_len=cfg.frame_len,
-            dropout_p=cfg.dropout_p,
-        )
-    elif cfg.model_type == "linear_split":
-        model = LinearSplitModel(
-            num_classes=cfg.num_classes,
-            keypoints_len=len(extracted_keypoints),
-            frame_len=cfg.frame_len,
-            dropout_p=cfg.dropout_p,
-        )
+    model = choose_model(
+        cfg.model_type, cfg.num_classes, keypoint_len, cfg.frame_len, cfg.dropout_p
+    )
+
     lightning_module = AslLightningModule(cfg.num_classes, model)
     logger = (
         WandbLogger(project="ASL", name=cfg.run_name, save_dir=cfg.root_dir) if cfg.log else None

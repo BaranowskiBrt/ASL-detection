@@ -7,23 +7,23 @@ from scipy.spatial.transform import Rotation as R
 
 
 class DataAugmenter:
-    def __init__(self) -> None:
-        self.random_cutout_size = 0
+    def __init__(self, cfg) -> None:
+        self.random_cutout_size = cfg.random_cutout_size
 
-        self.rotation_p = 0
-        self.rotation_max_deg = 15
+        self.rotation_p = cfg.rotation_p
+        self.rotation_max_deg = cfg.rotation_max_deg
 
-        self.jiggle_p = 0
-        self.jiggle_max = 0.03
+        self.jiggle_p = cfg.jiggle_p
+        self.jiggle_max = cfg.jiggle_max
 
-        self.mirror_p = 0.5
+        self.mirror_p = cfg.mirror_p
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if self.random_cutout_size:
             # It could be also done before first interpolation, but there would be no option
             # of caching the interpolation and preprocessing and augmentation would be mixed.
             frame_len = x.shape[0]
-            size = random.randint(0, int(self.max_batch_dropout * frame_len))
+            size = random.randint(0, int(self.random_cutout_size * frame_len))
             start_offset = random.randint(0, x.shape[1] - size)
             x = torch.cat([x[:start_offset, :, :], x[start_offset + size :, :, :]], dim=0)
             x = x.permute(1, 2, 0)

@@ -3,11 +3,13 @@ batch_size: 128
 num_workers: 4
 num_classes: 250
 rows_per_frame: 543
-frame_len: 20
-# If "signer_split: True", split rounded to a signer
-model_type: gru
+frame_len: 150
+# model_type: gru
+model_type: transformer
 # model_type: linear_split
 # model_type: linear
+
+# If "signer_split: True", split rounded to a signer
 train_frac: 0.9
 signer_split: True
 log: True
@@ -24,3 +26,11 @@ pose: False
 hands: True
 
 dropout_p: 0
+
+augmenter:
+  random_cutout_size: 0
+  rotation_p: 0
+  rotation_max_deg: 15
+  jiggle_p: 0
+  jiggle_max: 0.03
+  mirror_p: 0.5

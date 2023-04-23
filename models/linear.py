@@ -4,6 +4,11 @@ import torch
 from torch import nn
 
 
+class FlipSequence(nn.Module):
+    def forward(self, x):
+        return x.permute((0, 2, 1))
+
+
 class LinearBlock(nn.Module):
     def __init__(
         self,
@@ -12,6 +17,7 @@ class LinearBlock(nn.Module):
         batch_norm: Optional[int] = None,
         activation: Optional[nn.Module] = nn.ReLU(),
         dropout_p: float = 0,
+        is_sequential: bool = False,
     ) -> None:
         # Setting object as a default is not a good idea, but it doesn't matter for ReLU
         super().__init__()
@@ -22,14 +28,18 @@ class LinearBlock(nn.Module):
         layers = [nn.Linear(in_features, out_features)]
 
         if batch_norm:
+            if is_sequential:
+                layers.append(FlipSequence())
             layers.append(torch.nn.BatchNorm1d(out_features))
+            if is_sequential:
+                layers.append(FlipSequence())
         if activation:
             layers.append(activation)
         if dropout_p:
             layers.append(nn.Dropout(dropout_p))
         self.module = nn.Sequential(*layers)
 
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.module(x)
 
 
@@ -48,16 +58,13 @@ class LinearModel(nn.Module):
             LinearBlock(
                 frame_len * keypoints_len * dim_no, 1024, batch_norm=True, dropout_p=dropout_p
             ),
-            LinearBlock(
-                frame_len * keypoints_len * dim_no, 1024, batch_norm=True, dropout_p=dropout_p
-            ),
             LinearBlock(1024, 512, batch_norm=True, dropout_p=dropout_p),
             LinearBlock(512, 400, batch_norm=True, dropout_p=dropout_p),
             LinearBlock(400, 256, batch_norm=True, dropout_p=dropout_p),
             LinearBlock(256, num_classes, activation=None),
         )
 
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
 
@@ -99,7 +106,7 @@ class LinearSplitModel(nn.Module):
             LinearBlock(256, num_classes, activation=None),
         )
 
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Hands are the last 42 keypoints
         hand1 = self.hand_model(x[:, :, -21:, :])
         hand2 = x[:, :, -42:-21, :]
